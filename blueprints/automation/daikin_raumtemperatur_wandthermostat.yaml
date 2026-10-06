@@ -1,0 +1,231 @@
+blueprint:
+  name: Daikin – Raumtemperatur vom Wandthermostat
+  description: >
+    Lässt eine Klimaanlage (z. B. Daikin) auf die Temperatur regeln, die das
+    Wandthermostat im Raum misst, statt auf ihren eigenen Fühler im
+    Innengerät.
+
+
+    Die Klimaanlage bekommt dazu einen korrigierten Sollwert:
+    **Sollwert = Wunschtemperatur + (Temperatur Klimaanlage − Temperatur
+    Wandthermostat)**. Die Klimaanlage regelt dann intern genau auf die
+    Abweichung, die am Wandthermostat gemessen wird. Funktioniert beim
+    Heizen, Kühlen und im Automatikbetrieb.
+
+
+    Die Wunschtemperatur wird ab jetzt am Wandthermostat bzw. am gewählten
+    Helfer eingestellt, nicht mehr an der Klimaanlage. Manuelle Änderungen
+    an der Klimaanlage überschreibt die Automation beim nächsten Durchlauf.
+  domain: automation
+  source_url: https://github.com/T3flon/spypoint-home-assistant/blob/ccr-7b39d5cb-5ek82m/blueprints/automation/daikin_raumtemperatur_wandthermostat.yaml
+  homeassistant:
+    min_version: 2024.10.0
+  input:
+    klimaanlage:
+      name: Klimaanlage
+      description: Die climate-Entität der Daikin.
+      selector:
+        entity:
+          filter:
+            - domain: climate
+    raumtemperatur:
+      name: Raumtemperatur (Wandthermostat Wohnzimmer)
+      description: >
+        Das Wandthermostat (climate-Entität, dann wird dessen gemessene
+        Temperatur verwendet) oder sein Temperatursensor.
+      selector:
+        entity:
+          filter:
+            - domain: climate
+            - domain: sensor
+              device_class: temperature
+    wunschtemperatur:
+      name: Wunschtemperatur
+      description: >
+        Woher die gewünschte Raumtemperatur kommt. Entweder direkt das
+        Wandthermostat (climate-Entität, dann gilt dessen Solltemperatur)
+        oder ein eigener Zahl-Helfer (input_number), z. B. wenn beim Kühlen
+        ein anderer Wert gelten soll als die Heizungs-Solltemperatur.
+      selector:
+        entity:
+          filter:
+            - domain: climate
+            - domain: input_number
+            - domain: number
+    feineinstellung:
+      name: Feineinstellungen
+      icon: mdi:tune
+      collapsed: true
+      input:
+        max_korrektur:
+          name: Maximale Korrektur
+          description: >
+            Um wie viel der an die Klimaanlage gesendete Sollwert höchstens
+            von der Wunschtemperatur abweichen darf.
+          default: 5
+          selector:
+            number:
+              min: 1
+              max: 10
+              step: 0.5
+              unit_of_measurement: K
+        min_sollwert:
+          name: Kleinster Sollwert
+          description: >
+            Untergrenze für den gesendeten Sollwert. Beim Kühlen und im
+            Automatikbetrieb gilt mindestens 18 °C (kleinster Daikin-Wert).
+          default: 16
+          selector:
+            number:
+              min: 10
+              max: 25
+              step: 0.5
+              unit_of_measurement: °C
+        max_sollwert:
+          name: Größter Sollwert
+          description: Obergrenze für den gesendeten Sollwert.
+          default: 30
+          selector:
+            number:
+              min: 20
+              max: 32
+              step: 0.5
+              unit_of_measurement: °C
+        schrittweite:
+          name: Schrittweite
+          description: >
+            Auf diese Schritte wird der Sollwert gerundet. Die Daikin-
+            Integration von Home Assistant nimmt halbe Grad an.
+          default: 0.5
+          selector:
+            select:
+              options:
+                - label: 0,5 °C
+                  value: "0.5"
+                - label: 1 °C
+                  value: "1"
+        hysterese:
+          name: Mindeständerung
+          description: >
+            Ein neuer Sollwert wird bei den regelmäßigen Prüfungen erst
+            gesendet, wenn er mindestens so weit vom aktuellen abweicht.
+            Größere Werte bedeuten weniger Befehle (und weniger Piepen),
+            aber ungenauere Regelung.
+          default: 0.5
+          selector:
+            number:
+              min: 0.5
+              max: 3
+              step: 0.5
+              unit_of_measurement: K
+        intervall:
+          name: Prüfintervall
+          description: >
+            Wie oft der Sollwert an die aktuellen Temperaturen angepasst
+            wird. Änderungen der Wunschtemperatur und das Einschalten der
+            Klimaanlage wirken sofort.
+          default: "/10"
+          selector:
+            select:
+              options:
+                - label: alle 5 Minuten
+                  value: "/5"
+                - label: alle 10 Minuten
+                  value: "/10"
+                - label: alle 15 Minuten
+                  value: "/15"
+                - label: alle 30 Minuten
+                  value: "/30"
+
+mode: queued
+max: 5
+max_exceeded: silent
+
+triggers:
+  # Wunschtemperatur geändert: Helfer-Wert (Zustand) oder Solltemperatur
+  # des Wandthermostats (Attribut).
+  - trigger: state
+    entity_id: !input wunschtemperatur
+    to: ~
+    id: sofort
+  - trigger: state
+    entity_id: !input wunschtemperatur
+    attribute: temperature
+    id: sofort
+  # Klimaanlage ein-/umgeschaltet (nur Betriebsart, keine Attribute).
+  - trigger: state
+    entity_id: !input klimaanlage
+    to: ~
+    id: sofort
+  - trigger: homeassistant
+    event: start
+    id: sofort
+  - trigger: time_pattern
+    minutes: !input intervall
+    id: regelmaessig
+
+variables:
+  klimaanlage: !input klimaanlage
+  raum_entity: !input raumtemperatur
+  wunsch_entity: !input wunschtemperatur
+  max_korrektur: !input max_korrektur
+  min_sollwert: !input min_sollwert
+  max_sollwert: !input max_sollwert
+  schrittweite_input: !input schrittweite
+  hysterese: !input hysterese
+
+actions:
+  - variables:
+      modus: "{{ states(klimaanlage) }}"
+      schritt: "{{ schrittweite_input | float(0.5) }}"
+      t_klima: "{{ state_attr(klimaanlage, 'current_temperature') | float(none) }}"
+      soll_aktuell: "{{ state_attr(klimaanlage, 'temperature') | float(none) }}"
+      t_raum: >
+        {% if raum_entity.startswith('climate.') %}
+          {{ state_attr(raum_entity, 'current_temperature') | float(none) }}
+        {% else %}
+          {{ states(raum_entity) | float(none) }}
+        {% endif %}
+      t_wunsch: >
+        {% if wunsch_entity.startswith('climate.') %}
+          {% set t = state_attr(wunsch_entity, 'temperature') %}
+          {% if t is none %}
+            {% set t = state_attr(wunsch_entity,
+                 'target_temp_high' if modus == 'cool' else 'target_temp_low') %}
+          {% endif %}
+          {{ t | float(none) }}
+        {% else %}
+          {{ states(wunsch_entity) | float(none) }}
+        {% endif %}
+  - alias: Klimaanlage heizt, kühlt oder läuft im Automatikbetrieb
+    condition: template
+    value_template: "{{ modus in ['heat', 'cool', 'heat_cool', 'auto'] }}"
+  - alias: Alle Temperaturen sind verfügbar
+    condition: template
+    value_template: >
+      {{ t_klima is number and t_raum is number and t_wunsch is number
+         and soll_aktuell is number }}
+  - variables:
+      korrektur: >
+        {{ [[t_klima - t_raum, max_korrektur | float] | min,
+            -(max_korrektur | float)] | max }}
+      untergrenze: >
+        {{ [min_sollwert | float,
+            18 if modus != 'heat' else 0,
+            state_attr(klimaanlage, 'min_temp') | float(0)] | max }}
+      obergrenze: >
+        {{ [max_sollwert | float,
+            state_attr(klimaanlage, 'max_temp') | float(99)] | min }}
+      soll_neu: >
+        {% set s = ((t_wunsch + korrektur) / schritt) | round(0) * schritt %}
+        {{ ([[s, untergrenze] | max, obergrenze] | min) | round(1) }}
+      schwelle: >
+        {{ schritt / 2 if trigger.id == 'sofort' else hysterese | float }}
+  - alias: Neuer Sollwert weicht genug vom aktuellen ab
+    condition: template
+    value_template: "{{ (soll_neu - soll_aktuell) | abs >= schwelle - 0.01 }}"
+  - action: climate.set_temperature
+    target:
+      entity_id: "{{ klimaanlage }}"
+    data:
+      temperature: "{{ soll_neu }}"
